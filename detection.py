@@ -2,142 +2,96 @@ import cv2
 import numpy as np
 from operator import itemgetter
 
+def normalize(image):
+	summation = sum(map(sum,image))
+	size  = image.shape[0]*image.shape[1]
+	mean  = summation/size
+	image = image.astype(np.int16)
+	image = image-mean
+	return image
 
+def get_contours(image):
+	noise_removal = cv2.bilateralFilter(image,9,75,75)
+	equal_histogram = cv2.equalizeHist(noise_removal)
+	ret,thresh_image = cv2.threshold(equal_histogram,0,255,cv2.THRESH_OTSU)
+	canny_image = cv2.Canny(thresh_image,250,255)
+	new,contours, hierarchy = cv2.findContours(canny_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+	return contours
 
-np.set_printoptions(threshold=np.nan)
-img = cv2.imread("image.jpg",0)
-ref = cv2.imread("lp.jpg",0)
-summation=0
-for i in range(246):
-	for j in range(500):
-		summation+=ref[i][j]
+def get_candidates(contours):
+	candidates = []
 
-size=ref.shape[0]*ref.shape[1]
+	for contour in contours:
+		peri = cv2.arcLength(contour, True)
+		approx = cv2.approxPolyDP(contour, 0.06 * peri, True)
+		if len(approx) != 4: continue
+		
+		area=cv2.contourArea(approx)
+		if area > 2000:  
+			candidates += [approx]
 
-mean=summation/size
-ref=ref.astype(np.int16)
-ref=ref-mean
-# cv2.imshow('img',img)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-noise_removal = cv2.bilateralFilter(img,9,75,75)
-equal_histogram = cv2.equalizeHist(noise_removal)
-ret,thresh_image = cv2.threshold(equal_histogram,0,255,cv2.THRESH_OTSU)
-canny_image = cv2.Canny(thresh_image,250,255)
-new,contours, hierarchy = cv2.findContours(canny_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-license_plate_candidates = []
-for c in contours:
-	peri = cv2.arcLength(c, True)
-	approx = cv2.approxPolyDP(c, 0.06 * peri, True)
-	area=cv2.contourArea(approx)
+	return candidates
 
-	if len(approx) == 4 and area > 2000:  
-		license_plate_candidates += [approx]
+def extract(candidates):
+	r1=candidate[0][0][0]
+	c1=candidate[0][0][1]
+	r2=candidate[1][0][0]
+	c2=candidate[1][0][1]
+	r3=candidate[2][0][0]
+	c3=candidate[2][0][1]
+	r4=candidate[3][0][0]
+	c4=candidate[3][0][1]
 
-results=[]
+	candidate=[[r1,c1],[r2,c2],[r3,c3],[r4,c4]]
+	candidate=sorted(candidate,key=itemgetter(1))
+	up=sorted(candidate[:2],key=itemgetter(0))
+	down=sorted(candidate[2:],key=itemgetter(0))
 
-for license_plate_candidate in license_plate_candidates:
-	
-	r1=license_plate_candidate[0][0][0]
-	c1=license_plate_candidate[0][0][1]
-	r2=license_plate_candidate[1][0][0]
-	c2=license_plate_candidate[1][0][1]
-	r3=license_plate_candidate[2][0][0]
-	c3=license_plate_candidate[2][0][1]
-	r4=license_plate_candidate[3][0][0]
-	c4=license_plate_candidate[3][0][1]
+	candidate=[up[0],down[0],up[1],down[1]]
 
-	license_plate_candidate=[[r1,c1],[r2,c2],[r3,c3],[r4,c4]]
-	license_plate_candidate=sorted(license_plate_candidate,key=itemgetter(1))
-	up=sorted(license_plate_candidate[:2],key=itemgetter(0))
-	down=sorted(license_plate_candidate[2:],key=itemgetter(0))
-
-	license_plate_candidate=[up[0],down[0],up[1],down[1]]
-
-	r1=license_plate_candidate[0][1]
-	c1=license_plate_candidate[0][0]
-	r2=license_plate_candidate[1][1]
-	c2=license_plate_candidate[1][0]
-	r3=license_plate_candidate[2][1]
-	c3=license_plate_candidate[2][0]
-	r4=license_plate_candidate[3][1]
-	c4=license_plate_candidate[3][0]
-
-
+	r1=candidate[0][1]
+	c1=candidate[0][0]
+	r2=candidate[1][1]
+	c2=candidate[1][0]
+	r3=candidate[2][1]
+	c3=candidate[2][0]
+	r4=candidate[3][1]
+	c4=candidate[3][0]
 
 	pts1 = np.float32([[c1,r1],[c2,r2],[c3,r3],[c4,r4]])
 	pts2 = np.float32([[0,0],[0,246],[500,0],[500,246]])
 
-
 	M = cv2.getPerspectiveTransform(pts1,pts2)
 	dst = cv2.warpPerspective(img,M,(500,246))
-	summation=0
-	for i in range(246):
-		for j in range(500):
-			summation+=dst[i][j]
 
-	size=dst.shape[0]*dst.shape[1]
+	return dst
 
-	mean=summation/size
-	dst=dst.astype(np.int16)
-	dst=dst-mean
-
+def get_correlation(dst,ref):
 	correlation=0
 	for i in range(246):
 		for j in range(500):
 			correlation+=(dst[i][j]*ref[i][j])
+
+	return correlation
+
+def detect(image):
+	np.set_printoptions(threshold=np.nan)
+	img = image
+	ref = cv2.imread("../plate.jpeg",0)
 	
+	ref = normalize(ref)
+	contours = get_contours(img)
+	license_plate_candidates = get_candidates(contours)
 
-	results+=[correlation]
+	results=[]
 
+	for license_plate_candidate in license_plate_candidates:
+		dst = extract(license_plate_candidate)		
+		dst = normalize(dst)
+		results += [get_correlation(dst,ref)]
 
-license_plate=license_plate_candidates[results.index(max(results))]
+	license_plate = license_plate_candidates[results.index(max(results))]
 
-r1=license_plate[0][0][0]
-c1=license_plate[0][0][1]
-r2=license_plate[1][0][0]
-c2=license_plate[1][0][1]
-r3=license_plate[2][0][0]
-c3=license_plate[2][0][1]
-r4=license_plate[3][0][0]
-c4=license_plate[3][0][1]
-license_plate=[[r1,c1],[r2,c2],[r3,c3],[r4,c4]]
-license_plate=sorted(license_plate,key=itemgetter(1))
-up=sorted(license_plate[:2],key=itemgetter(0))
-down=sorted(license_plate[2:],key=itemgetter(0))
-license_plate=[up[0],down[0],up[1],down[1]]
-r1=license_plate[0][1]
-c1=license_plate[0][0]
-r2=license_plate[1][1]
-c2=license_plate[1][0]
-r3=license_plate[2][1]
-c3=license_plate[2][0]
-r4=license_plate[3][1]
-c4=license_plate[3][0]
+	plate = extract(license_plate)
 
-pts1 = np.float32([[c1,r1],[c2,r2],[c3,r3],[c4,r4]])
-pts2 = np.float32([[0,0],[0,246],[500,0],[500,246]])
-
-
-M = cv2.getPerspectiveTransform(pts1,pts2)
-dst = cv2.warpPerspective(img,M,(500,246))
-
-
-
-
-
-
-
-
-
-
-	# for i in range(246):
-	# 	for j in range(500):
-
-
-
-
-# cv2.imshow('img',dst)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-# cv2.imwrite("lp.jpg",dst)
+	return plate
