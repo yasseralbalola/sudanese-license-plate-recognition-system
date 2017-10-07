@@ -14,7 +14,11 @@ def get_contours(image):
 	noise_removal = cv2.bilateralFilter(image,9,75,75)
 	equal_histogram = cv2.equalizeHist(noise_removal)
 	ret,thresh_image = cv2.threshold(equal_histogram,0,255,cv2.THRESH_OTSU)
+	# thresh_image = cv2.adaptiveThreshold(equal_histogram,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,11,2)
 	canny_image = cv2.Canny(thresh_image,250,255)
+	cv2.imshow('plate',canny_image)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()	
 	new,contours, hierarchy = cv2.findContours(canny_image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 	return contours
 
@@ -32,7 +36,7 @@ def get_candidates(contours):
 
 	return candidates
 
-def extract(candidates):
+def extract(candidate,img):
 	r1=candidate[0][0][0]
 	c1=candidate[0][0][1]
 	r2=candidate[1][0][0]
@@ -67,31 +71,44 @@ def extract(candidates):
 	return dst
 
 def get_correlation(dst,ref):
+	# edit function
+	_,std1 = cv2.meanStdDev(dst)
+	_,std2 = cv2.meanStdDev(ref)
 	correlation=0
+	size  = dst.shape[0]*dst.shape[1]
 	for i in range(246):
 		for j in range(500):
-			correlation+=(dst[i][j]*ref[i][j])
+			correlation+=(dst[i][j]*ref[i][j])/(std1*std2*size)
 
 	return correlation
 
 def detect(image):
 	np.set_printoptions(threshold=np.nan)
 	img = image
-	ref = cv2.imread("../plate.jpeg",0)
+	ref = cv2.imread("lp.jpg",0)
 	
 	ref = normalize(ref)
+	
 	contours = get_contours(img)
 	license_plate_candidates = get_candidates(contours)
 
 	results=[]
 
 	for license_plate_candidate in license_plate_candidates:
-		dst = extract(license_plate_candidate)		
+		dst = extract(license_plate_candidate,img)	
+		
+		print get_correlation(dst,ref)
 		dst = normalize(dst)
 		results += [get_correlation(dst,ref)]
 
+
+
 	license_plate = license_plate_candidates[results.index(max(results))]
 
-	plate = extract(license_plate)
+	plate = extract(license_plate,img)
 
 	return plate
+
+# if __name__ == '__main__':
+# 	img= cv2.imread('image.jpg',0)
+# 	detect(img)
